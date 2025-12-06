@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # 1. Serviço do Banco de Dados PostgreSQL
+  db:
+    image: postgres:16-alpine
+    container_name: ecowatt-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_DATABASE}
+    ports:
+      - "5432:5432"
+    volumes:
+      # Cria um volume persistente para manter os dados
+      - ecowatt_data:/var/lib/postgresql/data
+      
+      # [CORREÇÃO CRÍTICA]: Mapeia init-db.sql para o diretório de inicialização do Postgres
+      # Isso garante que o esquema (tabelas med_dia e devices) seja criado.
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Serviço do Backend Node.js
+  backend:
+    build:
+      context: ./ecowatt-backend
+      dockerfile: Dockerfile
+    container_name: ecowatt-backend-app
+    restart: always
+    environment:
+      # Variáveis de ambiente injetadas do arquivo .env
+      PORT: ${PORT}
+      # Acessa o banco de dados usando o nome do serviço 'db' e a porta interna 5432
+      DB_HOST: db
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_PORT: 5432
+    ports:
+      - "3000:3000"
+    depends_on:
+      # Garante que o banco de dados esteja pronto antes de iniciar o backend
+      db:
+        condition: service_healthy 
+        
+    # [CORREÇÃO DE ARQUITETURA]: Usar bind mount do código para desenvolvimento
+    volumes:
+      - ./ecowatt-backend:/app # Mapeia o diretório do backend para hot-reload (nodemon)
+      # Removido volumes incorretos de ecowatt_data e init-db.sql que pertencem ao serviço 'db'
+      
+    command: npm run dev
+    
+volumes:
+  ecowatt_data:

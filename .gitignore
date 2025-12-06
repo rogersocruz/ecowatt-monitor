@@ -1,0 +1,31 @@
+# Dependencies
+/node_modules
+/ecowatt-backend/node_modules
+/ecowatt-frontend/node_modules
+
+# Production
+/build
+/dist
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDEs and editors
+.idea
+.vscode/
+*.swp
+
+# OS Files
+.DS_Store
+Thumbs.db
