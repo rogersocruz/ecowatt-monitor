@@ -32,6 +32,10 @@
     +---package.json
     +---README.md
     +---vite.config.js
+    +---.vite/
+        +---deps/
+            +---package.json
+            +---_metadata.json
     +---public/
         +---vite.svg
     +---src/
@@ -5701,6 +5705,26 @@ export default defineConfig({
 
 
 ----------------------------------------------------------------------
+ARQUIVO: ecowatt-frontend\.vite\deps\package.json
+----------------------------------------------------------------------
+{
+  "type": "module"
+}
+
+
+----------------------------------------------------------------------
+ARQUIVO: ecowatt-frontend\.vite\deps\_metadata.json
+----------------------------------------------------------------------
+{
+  "hash": "026b6d30",
+  "configHash": "3c263cfb",
+  "lockfileHash": "fdeed3ef",
+  "browserHash": "d48f87d6",
+  "optimized": {},
+  "chunks": {}
+}
+
+----------------------------------------------------------------------
 ARQUIVO: ecowatt-frontend\src\App.css
 ----------------------------------------------------------------------
 #root {
@@ -6029,9 +6053,9 @@ ARQUIVO: ecowatt-frontend\src\pages\Dashboard.jsx
 // src/pages/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { Box, Typography, Grid, Card, CardContent, Divider, CircularProgress, Alert, Container } from '@mui/material';
-import { Bolt as BoltIcon, TrendingUp as TrendIcon, CalendarToday as CalendarIcon, Money as MoneyIcon } from '@mui/icons-material';
+import { TrendingUp as TrendIcon, CalendarToday as CalendarIcon, AttachMoney as MoneyIcon } from '@mui/icons-material';
 
-// --- Componentes ---
+// --- Componentes de Apoio ---
 
 // Componente para o Card de Resumo no Topo
 const SummaryCard = ({ title, value, color = 'text.primary', bgcolor = '#f0f0f0', icon, secondaryValue }) => (
@@ -6055,24 +6079,36 @@ const SummaryCard = ({ title, value, color = 'text.primary', bgcolor = '#f0f0f0'
   </Card>
 );
 
-// Componente para o Card de Detalhe do Disjuntor na parte inferior
+// Componente para o Card de Detalhe do Disjuntor redimensionado
 const DisjuntorCard = ({ id, name, consumoMes, mediaMes, mediaDia, preco }) => (
-  <Card variant="outlined" sx={{ mb: 2, height: 280, display: 'flex', flexDirection: 'column', textAlign: 'center' }}>
-    <CardContent sx={{ flexGrow: 1 }}>
-      <Typography variant="h6" color="primary.main">{name.split(' - ')[0]}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{name.split(' - ')[1]}</Typography>
+  <Card variant="outlined" sx={{ mb: 2, minHeight: 340, display: 'flex', flexDirection: 'column', textAlign: 'center' }}>
+    <CardContent sx={{ flexGrow: 1, p: 1 }}>
+      <Typography variant="h6" color="primary.main" sx={{ fontWeight: 'bold', fontSize: '1rem' }}>
+        {name.split(' - ')[0]}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontSize: '0.75rem' }}>
+        {name.split(' - ')[1]}
+      </Typography>
+      
       <Divider sx={{ my: 1 }} />
-      <Box sx={{ textAlign: 'left', p: 1 }}>
-        <Typography variant="caption" display="block">Consumo Mês:</Typography>
-        <Typography variant="body1" sx={{ fontWeight: 'bold' }}>{consumoMes}</Typography>
-        <Typography variant="caption" display="block">Média Mês (total):</Typography>
-        <Typography variant="body1">{mediaMes}</Typography>
-        <Typography variant="caption" display="block">Média Dia:</Typography>
-        <Typography variant="body1" sx={{ mb: 1 }}>{mediaDia}</Typography>
+      
+      <Box sx={{ textAlign: 'left', px: 1 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>Consumo no Ciclo:</Typography>
+        <Typography variant="body1" sx={{ fontWeight: 'bold', mb: 1 }}>{consumoMes}</Typography>
+        
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>Média Mês (Esperado):</Typography>
+        <Typography variant="body1" sx={{ mb: 1 }}>{mediaMes}</Typography>
+        
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>Média Dia:</Typography>
+        <Typography variant="body1">{mediaDia}</Typography>
       </Box>
     </CardContent>
-    <Box sx={{ backgroundColor: 'grey.300', p: 1 }}>
-      <Typography variant="h6" color="error.main">{preco}</Typography>
+    
+    <Box sx={{ backgroundColor: 'grey.300', p: 1.5, mt: 'auto' }}>
+      <Typography variant="h6" color="error.main" sx={{ fontWeight: 'bold' }}>
+        {preco}
+      </Typography>
+      <Typography variant="caption" color="text.secondary">custo acumulado</Typography>
     </Box>
   </Card>
 );
@@ -6087,7 +6123,6 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchDashboard = async () => {
       try {
-        // Assume que o backend está em localhost:3000
         const response = await fetch('http://localhost:3000/api/dashboard');
         
         if (!response.ok) {
@@ -6096,6 +6131,7 @@ const Dashboard = () => {
         
         const result = await response.json();
         setData(result);
+        setError(null); // Limpa erro se a conexão voltar
         
       } catch (err) {
         setError(err.message);
@@ -6104,24 +6140,31 @@ const Dashboard = () => {
       }
     };
 
+    // Execução imediata
     fetchDashboard();
+
+    // Configuração do Polling para tempo real (a cada 5 segundos)
+    const interval = setInterval(fetchDashboard, 5000);
+
+    // Cleanup: limpa o intervalo ao desmontar o componente
+    return () => clearInterval(interval);
   }, []);
   
   if (loading) {
     return (
       <Container sx={{ display: 'flex', justifyContent: 'center', mt: 10 }}>
         <CircularProgress />
-        <Typography sx={{ ml: 2 }}>Carregando dados de telemetria...</Typography>
+        <Typography sx={{ ml: 2 }}>Carregando telemetria em tempo real...</Typography>
       </Container>
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <Container sx={{ mt: 5 }}>
         <Alert severity="error">
-          Erro ao carregar Dashboard. Certifique-se que o Docker Compose (Backend/DB) está rodando e populado (API: /admin/seed-db). 
-          Detalhes: {error}
+          Erro de conexão com o servidor. Verifique se o backend está rodando.
+          <br />Detalhes: {error}
         </Alert>
       </Container>
     );
@@ -6138,7 +6181,6 @@ const Dashboard = () => {
     disjuntores 
   } = data;
 
-  // Determinar cor da variação percentual
   const relativeColor = relativo.startsWith('+') ? 'error.main' : 'success.main';
   const somaUltimoMesText = `Σ(Soma) Último Mês: ${somaUltimoMes}`;
 
@@ -6148,7 +6190,6 @@ const Dashboard = () => {
         🚀 EcoWatt Dashboard
       </Typography>
       
-      {/* Ciclo de Medição */}
       <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 3 }}>
         Ciclo de Medição: {ciclo} 
       </Typography>
@@ -6156,7 +6197,6 @@ const Dashboard = () => {
       {/* Grid de Resumo Superior */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         
-        {/* Coluna 1: Consumo Mês (Grande) */}
         <Grid item xs={12} sm={6} md={3}>
           <SummaryCard 
             title="Σ(Soma) Mês" 
@@ -6166,7 +6206,6 @@ const Dashboard = () => {
           />
         </Grid>
 
-        {/* Coluna 2: Relativo ao Último Mês e Consumo Último Mês */}
         <Grid item xs={12} sm={6} md={3}>
           <SummaryCard 
             title="Variação Último Ciclo" 
@@ -6178,10 +6217,9 @@ const Dashboard = () => {
           />
         </Grid>
 
-        {/* Coluna 3: Dias Restantes e Disjuntor que mais gasta */}
         <Grid item xs={12} sm={6} md={3}>
           <SummaryCard 
-            title="Dias até fim do ciclo de medição" 
+            title="Ciclo de medição" 
             value={diasRestantes} 
             color="warning.main" 
             icon={<CalendarIcon />}
@@ -6196,7 +6234,6 @@ const Dashboard = () => {
           </Card>
         </Grid>
 
-        {/* Coluna 4: Preço em Reais (R$) */}
         <Grid item xs={12} sm={6} md={3}>
           <SummaryCard 
             title="Custo Estimado (R$)" 
@@ -6212,7 +6249,6 @@ const Dashboard = () => {
         Medições Individuais (Dispositivos)
       </Typography>
 
-      {/* Grid de Detalhes dos Disjuntores (D1 a D6) */}
       <Grid container spacing={2}>
         {disjuntores.map((d, index) => (
           <Grid item xs={12} sm={6} md={4} lg={2} key={index}> 

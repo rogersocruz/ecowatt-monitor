@@ -2,7 +2,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { pool, getDashboardData, insertConsumptionData } from './db.js'; 
+// [ALTERAÇÃO 1] Importação da nova função getRawTelemetry
+import { pool, getDashboardData, insertConsumptionData, getRawTelemetry } from './db.js'; 
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -105,8 +106,21 @@ app.post('/api/data/ingest', async (req, res) => {
     }
 });
 
+// [ALTERAÇÃO 2] Nova Rota: Telemetria Bruta para o Dashboard fazer a integral temporal
+app.get('/api/raw-telemetry', async (req, res) => {
+    try {
+        const data = await getRawTelemetry();
+        res.status(200).json(data);
+    } catch (error) {
+        console.error("Erro ao buscar raw telemetry:", error.stack);
+        res.status(500).json({ 
+            message: 'Falha ao obter logs brutos.',
+            error: error.message 
+        });
+    }
+});
 
-// RF03: Rota para obter os dados do Dashboard
+// RF03: Rota para obter os dados do Dashboard (Agregado - Legacy ou uso misto)
 app.get('/api/dashboard', async (req, res) => {
     // TODO: No futuro, pegue o userId do token JWT
     const userId = 1; 

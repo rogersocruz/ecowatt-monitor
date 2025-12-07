@@ -1,221 +1,108 @@
-# ecowatt-hist-simulator.py
-import pandas as pd
-import numpy as np
-import requests
-import time
+import datetime
 import random
-import os
-import sys
-from datetime import datetime, timedelta
-from tqdm import tqdm
+import math
+from tqdm import tqdm # pip install tqdm
 
 # --- CONFIGURAÇÃO ---
-API_BASE_URL = "http://localhost:3000/api"
-DAYS_TO_SIMULATE = 730  # Dois anos
-INTERVAL_SECONDS = 60  # Um ponto por minuto
-POINTS_PER_DAY = (24 * 60 * 60) // INTERVAL_SECONDS # 1440 pontos/dia
+OUTPUT_FILE = "history_seed.sql"
+DAYS_BACK = 365
+INTERVAL_MINUTES = 1 # Alta resolução
 
-# Define a data atual menos um dia (final de ontem) como o fim do backfilling
-END_DATE = datetime.now().date() - timedelta(days=1) 
-START_DATE = END_DATE - timedelta(days=DAYS_TO_SIMULATE) 
-
-# PERFIS (Limites Reais): {ID: (BASE_KW_MEDIO_STANDBY, POTENCIA_PICO_KW, SIGMA_KW)}
-DEVICE_PROFILES_HF = {
-    1: (0.001, 0.03, 0.0005, "D1 - Iluminação Sala"),    
-    2: (0.0001, 5.0, 0.05, "D2 - Chuveiro Quente"),  
-    3: (0.005, 2.5, 0.1, "D3 - Ar Condicionado Q/F"),    
-    4: (0.05, 0.5, 0.02, "D4 - Cozinha (Standby Geladeira)"),    
-    5: (0.01, 1.0, 0.01, "D5 - Piscina (Motor/Filtro)"),    
-    6: (0.0, -5.0, 0.2, "D6 - Geração PV"), # Pico Negativo
-}
-
-# Define Janelas de Uso RÍGIDAS (O consumo só ocorre dentro dessas janelas)
-# OBS: O AC (D3) tem lógica de janela diurna/integral separada por mês.
-USAGE_WINDOWS = {
-    1: [("19:00", "23:00")], # Iluminação: 4h noite
-    2: [("06:30", "06:50"), ("18:30", "18:50"), ("21:00", "21:20")], # Chuveiro: 3 banhos de 20min
-    3: [("23:00", "06:00")], # AC: 7h noturnas (Padrão)
-    4: [("06:00", "22:00")], # Cozinha: Standby Geladeira + Uso (Janela de pico)
-    5: [("09:00", "14:00")], # Piscina: 5h durante o dia
-    6: [("10:00", "16:00")], # Geração PV: 6h sol
-}
-# --- FUNÇÕES CORE ---
-
-def is_time_in_window(current_time, window_list):
-    """Verifica se o horário atual está dentro de qualquer janela de uso definida."""
-    time_only = current_time.time()
+# Perfis de Consumo (Simulação de Comportamento Real)
+def get_device_power(dev_id, date_time):
+    hour = date_time.hour
+    minute = date_time.minute
+    month = date_time.month
     
-    for start_str, end_str in window_list:
-        start_time = datetime.strptime(start_str, "%H:%M").time()
-        end_time = datetime.strptime(end_str, "%H:%M").time()
+    # Adiciona um ruído aleatório para parecer real (+- 10%)
+    noise = random.uniform(0.9, 1.1)
+
+    # Lógica de Consumo por Dispositivo
+    if dev_id == 1: # Iluminação (Mais à noite)
+        if 18 <= hour <= 23: return 1.2 * noise
+        return 0.0
+
+    elif dev_id == 2: # Chuveiro (Picos manhã/noite)
+        # 15 min banho as 07:00 e 19:00
+        if (hour == 7 or hour == 19) and 0 <= minute <= 15:
+            return 12.0 * noise
+        return 0.0
+
+    elif dev_id == 3: # Ar Condicionado (Sazonalidade + Dia)
+        # Mais uso no verão (Dez, Jan, Fev)
+        is_summer = month in [12, 1, 2]
+        base = 6.0 if is_summer else 0.0
         
-        if start_time <= end_time:
-            if start_time <= time_only <= end_time:
-                return True
-        else: 
-            if time_only >= start_time or time_only <= end_time:
-                return True
-    return False
+        # Liga das 22h as 06h (dormir) ou tarde quente
+        if is_summer and (hour >= 22 or hour <= 6): return base * noise
+        return 0.0
 
-def ingest_data(device_id, delta_wh, timestamp):
-    """Envia a energia consumida no intervalo (Delta Wh) para o backend."""
-    url = f"{API_BASE_URL}/data/ingest"
+    elif dev_id == 4: # Cozinha (Geladeira constante + Microondas)
+        base_fridge = 0.15 # Geladeira liga/desliga
+        if random.random() > 0.7: return 2.0 # Pico microondas/forno
+        return base_fridge
+
+    elif dev_id == 5: # Piscina (Filtro durante o dia)
+        if 10 <= hour <= 14: return 8.0 * noise
+        return 0.0
+
+    elif dev_id == 6: # Solar PV (Curva de Sino durante o dia)
+        if 6 <= hour <= 18:
+            # Simula parábola solar (pico as 12h)
+            x = hour + (minute/60)
+            peak = 35.0
+            # Função quadrática simples para curva solar
+            generation = peak * math.sin((x - 6) * math.pi / 12)
+            if generation < 0: generation = 0
+            return -generation * noise # Negativo pois gera energia
+        return 0.0
     
-    payload = {
-        "device_id": device_id,
-        "kwh": float(delta_wh), 
-        "timestamp": timestamp.isoformat() 
-    }
+    return 0.0
+
+def generate_sql():
+    end_date = datetime.datetime.now()
+    start_date = end_date - datetime.timedelta(days=DAYS_BACK)
     
-    try:
-        response = requests.post(url, json=payload, timeout=5)
-        response.raise_for_status() 
-        return True
-    except requests.exceptions.RequestException as e:
-        status_code = response.status_code if hasattr(response, 'status_code') else 'N/A'
-        response_text = response.text if hasattr(response, 'text') else str(e)
+    total_intervals = int((end_date - start_date).total_seconds() / (INTERVAL_MINUTES * 60))
+    
+    print(f"--- 🏭 Gerando histórico para {DAYS_BACK} dias ({total_intervals} intervalos) ---")
+    print(f"Total estimado de linhas: {total_intervals * 6}")
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write("-- Carga Massiva de Histórico EcoWatt\n")
+        f.write("TRUNCATE TABLE med_dia;\n") # Limpa dados antigos para não duplicar
+        f.write("BEGIN;\n")
         
-        print(f"\n❌ Erro na Ingestão (D{device_id} @ {timestamp.time()}):")
-        print(f"  -> Status: {status_code}. Detalhes: {response_text}")
-        return False
-
-def generate_delta_kwh(device_id, base_kw, peak_kw, sigma_kw, current_time, date, hour):
-    """Calcula a energia (Wh) consumida no intervalo de 60 segundos com lógica de corte."""
-    
-    # 1. Checa Janelas de Tempo (Regra Rígida de Corte)
-    is_active_window = is_time_in_window(current_time, USAGE_WINDOWS.get(device_id, []))
-    power_kw = 0.0
-    
-    is_weekend = date.weekday() >= 5
-    is_summer_month = date.month in [1, 2, 12] # 3 meses de verão
-
-    # 2. Lógica de Geração de Potência (kW)
-    
-    if device_id == 6: 
-        if is_active_window:
-            power_kw = np.random.normal(peak_kw * -1, sigma_kw) # Geração PV
-        else:
-            power_kw = 0.0
+        # Buffer para escrita em lotes (muito mais rápido)
+        batch_size = 5000
+        values_buffer = []
+        
+        current_time = start_date
+        
+        # Barra de progresso
+        for _ in tqdm(range(total_intervals)):
+            timestamp_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
             
-    elif device_id == 5:
-        # D5: Piscina - Apenas fins de semana (5h)
-        if is_weekend and is_active_window:
-            power_kw = np.random.normal(peak_kw, sigma_kw)
-        elif is_active_window and not is_weekend:
-            power_kw = base_kw # Standby nos dias úteis durante a janela.
-        else:
-            power_kw = base_kw * 0.1 # Standby fora da janela
-
-    elif device_id == 3:
-        # D3: AC - Uso Integral no Verão ou Noturno no Resto do ano
-        if is_summer_month:
-            # Uso Integral (00:00 - 23:59) - Janela virtualmente ativa o dia todo
-            power_kw = np.random.normal(peak_kw, sigma_kw) 
-        elif is_active_window:
-             # Uso Noturno normal (23:00 - 06:00)
-             power_kw = np.random.normal(peak_kw, sigma_kw)
-        else:
-            power_kw = base_kw # Standby
-
-    elif device_id in [1, 2]:
-        # D1 (Iluminação) e D2 (Chuveiro): Uso rígidamente dentro da janela
-        if is_active_window:
-            power_kw = np.random.normal(peak_kw, sigma_kw)
-        else:
-            power_kw = 0.0 # Corte total
+            for dev_id in range(1, 7):
+                kwh = get_device_power(dev_id, current_time)
+                # Formata valor SQL: (id, 'timestamp', valor)
+                values_buffer.append(f"({dev_id}, '{timestamp_str}', {kwh:.4f})")
             
-    elif device_id == 4:
-        # D4: Cozinha - Uso de Pico dentro da Janela (10 utilizações de 5min = 50min/dia)
-        # 50 minutos de uso / 1440 minutos totais = 3.47% do tempo em pico.
-        if is_active_window and random.random() < 0.035: 
-             power_kw = np.random.normal(peak_kw, sigma_kw)
-        else:
-             power_kw = base_kw # Standby da geladeira/outros
-
-    # 3. Regra 4: Evento Aleatório (1 em 10.000 pontos)
-    if random.random() < 0.0001: 
-        power_kw *= 1.8 
-
-    # 4. Conversão para Delta Wh (Escala de valores maiores)
-    # Delta KWH = Potência (kW) * (60 segundos / 3600 segundos/hora)
-    delta_kwh = power_kw * (INTERVAL_SECONDS / 3600.0) 
-    
-    # Multiplica por 1000 para converter kWh para Wh
-    delta_wh = delta_kwh * 1000 
-    
-    if device_id != 6:
-        return max(delta_wh, 0)
-    else:
-        return delta_wh # Retorna negativo para geração
-
-
-# --- FUNÇÃO PRINCIPAL DE BACKFILLING ---
-
-def run_hf_ingestion():
-    """Executa o backfilling de 2 anos, com escala Wh e timestamp de 1 minuto, em ordem reversa."""
-    
-    total_points_est = DAYS_TO_SIMULATE * POINTS_PER_DAY * 6 
-    
-    print(f"--- ⏳ INICIANDO BACKFILLING REVERSO (2 ANOS / ~{total_points_est:.0f} pontos) ---")
-    print(f"Período: {START_DATE.isoformat()} a {END_DATE.isoformat()}")
-
-    # Cria a lista de datas em ordem direta
-    date_range = [START_DATE + timedelta(days=i) for i in range(DAYS_TO_SIMULATE + 1)]
-    
-    total_data_points = []
-    
-    # 1. Geração dos dados (Processo de Geração Inverso)
-    print("\nGerando dados de telemetria... (Pode levar alguns minutos)")
-    
-    # Itera as datas do PRESENTE para o PASSADO (Reverso)
-    for date in tqdm(reversed(date_range), desc="Gerando Histórico por Dia", unit="dia"):
-        
-        seconds_in_day = 24 * 60 * 60
-        
-        # Itera os segundos do dia em ordem reversa (fim do dia -> início da madrugada)
-        for total_seconds in range(seconds_in_day - INTERVAL_SECONDS, -1, -INTERVAL_SECONDS):
+            # Escreve no arquivo a cada lote
+            if len(values_buffer) >= batch_size:
+                f.write(f"INSERT INTO med_dia (id_disj, timestamp, valor) VALUES {','.join(values_buffer)};\n")
+                values_buffer = []
             
-            current_timestamp = datetime.combine(date, datetime.min.time()) + timedelta(seconds=total_seconds)
+            current_time += datetime.timedelta(minutes=INTERVAL_MINUTES)
             
-            hour = current_timestamp.hour
-            minute = current_timestamp.minute
+        # Escreve o restante
+        if values_buffer:
+            f.write(f"INSERT INTO med_dia (id_disj, timestamp, valor) VALUES {','.join(values_buffer)};\n")
             
-            for device_id, profile in DEVICE_PROFILES_HF.items():
-                base_kw, peak_kw, sigma_kw, _ = profile
-                
-                delta_wh = generate_delta_kwh(device_id, base_kw, peak_kw, sigma_kw, current_timestamp, date, hour)
-                
-                total_data_points.append({
-                    'device_id': device_id,
-                    'kwh': delta_wh, 
-                    'timestamp': current_timestamp
-                })
-
-    # Reverte a lista para ingestão na ordem cronológica correta (Passado -> Presente)
-    total_data_points.reverse() 
-
-    # 2. Ingestão dos dados (Serializada)
-    total_points = len(total_data_points)
-    print(f"\nTotal de pontos gerados: {total_points}")
-    print("\nIniciando Ingestão serializada (Passado -> Presente).")
-    
-    ingestion_success = True
-    
-    for point in tqdm(total_data_points, desc="Ingestão de Telemetria", unit="leituras"):
-        if not ingest_data(point['device_id'], point['kwh'], point['timestamp']):
-            ingestion_success = False
-            break 
+        f.write("COMMIT;\n")
         
-        #time.sleep(0.0001) 
-        
-    if ingestion_success:
-        print("\n--- ✅ BACKFILLING DE TELEMETRIA (2 ANOS) CONCLUÍDO. ---")
-    else:
-        print("\n--- ❌ FALHA NA INGESTÃO. Verifique logs acima. ---")
+    print(f"\n✅ Arquivo '{OUTPUT_FILE}' gerado com sucesso!")
+    print("👉 Próximo passo: Importar para o Docker.")
 
 if __name__ == "__main__":
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    if current_dir:
-        os.chdir(current_dir)
-    
-    run_hf_ingestion()
+    generate_sql()

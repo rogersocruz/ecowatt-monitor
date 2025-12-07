@@ -1,163 +1,112 @@
-import pandas as pd
-import numpy as np
+import tkinter as tk
+from tkinter import ttk
 import requests
+from datetime import datetime
+import threading
 import time
-import random
-from datetime import datetime, timedelta
-from tqdm import tqdm
 
-# --- CONFIGURAÇÃO ---
-# URL de Ingestão: http://localhost:3000/api/data/ingest
+# --- CONFIGURAÇÃO TÉCNICA ---
 API_BASE_URL = "http://localhost:3000/api"
 
-# Definições de Disjuntores e Consumo Base (kWh/dia)
 DEVICE_PROFILES = {
-    1: (1.2, 0.2, "D1 - Iluminação Sala"),    
-    2: (12.0, 0.05, "D2 - Chuveiro Quente"),  
-    3: (6.0, 0.5, "D3 - Ar Condicionado Q/F"),    
-    4: (4.0, 0.8, "D4 - Cozinha (Tomadas)"),    
-    5: (8.0, 0.1, "D5 - Piscina (Motor/Filtro)"),    
-    6: (-35.0, 0.4, "D6 - Geração PV"),  
+    1: {"name": "D1 - Iluminação Sala", "base": 1.2},
+    2: {"name": "D2 - Chuveiro Quente", "base": 12.0},
+    3: {"name": "D3 - Ar Condicionado Q/F", "base": 6.0},
+    4: {"name": "D4 - Cozinha (Tomadas)", "base": 4.0},
+    5: {"name": "D5 - Piscina (Motor/Filtro)", "base": 8.0},
+    6: {"name": "D6 - Geração PV", "base": -35.0},
 }
 
-# --- FUNÇÕES CORE ---
-
-def ingest_data(device_id, kwh, timestamp):
-    """Envia um ponto de dado para o backend Node.js."""
-    url = f"{API_BASE_URL}/data/ingest"
-    
-    # Payload para a rota POST /api/data/ingest
-    payload = {
-        "device_id": device_id,
-        "kwh": float(kwh),
-        # Passa o timestamp como ISO 8601 string, sem a parte de timezone se for local
-        "timestamp": timestamp.isoformat() 
-    }
-    
-    try:
-        response = requests.post(url, json=payload, timeout=5)
-        response.raise_for_status() 
-        return True
-    except requests.exceptions.ConnectionError:
-        print(f"\n❌ Erro de Conexão: Certifique-se que o backend está rodando em {API_BASE_URL}. Pulando ingestão...")
-        return False
-    except requests.exceptions.RequestException as e:
-        # Erro 500 ou 400 do servidor
-        print(f"\n❌ Erro ao enviar dado para D{device_id}: {e}")
-        return False
-
-# CORREÇÃO AQUI: device_id adicionado como primeiro argumento
-def generate_daily_kwh(device_id, base_kwh, sigma, date):
-    """Gera consumo diário com variação normal, focando em sazonalidade para AC."""
-    
-    # 1. Variação Aleatória (Normal)
-    random_variation = np.random.normal(0, sigma)
-    
-    # 2. Fator Sazonal (Afeta mais AC)
-    if date.month in [1, 2, 12, 7, 8] and base_kwh > 0: 
-        seasonal_factor = 1.3 
-    else:
-        seasonal_factor = 1.0
-
-    kwh = (base_kwh + random_variation) * seasonal_factor
-    
-    # Garante que o consumo nunca seja negativo para consumo (exceto PV, que é D6)
-    if device_id != 6:
-        kwh = max(0.1, kwh)
+class EcoWattIndustrialGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("EcoWatt - Controle de Precisão Telemetria")
+        self.root.geometry("650x850")
         
-    return kwh
+        self.states = {}      # Checkboxes (BooleanVar)
+        self.kwh_values = {}  # Valores numéricos (DoubleVar)
+        self.running = False  # Estado do loop
+        self.interval = tk.IntVar(value=5)
 
-# --- MODO 1: BACKFILLING (2 ANOS DE DADOS HISTÓRICOS) ---
-# Você pode descomentar esta função para executar o backfilling completo
-
-def run_backfilling(days=730):
-    """Gera e envia 2 anos de dados diários para todos os disjuntores."""
-    
-    print(f"--- ⏳ INICIANDO BACKFILLING (Últimos {days} dias) ---")
-    
-    end_date = datetime.now().date() - timedelta(days=1) 
-    start_date = end_date - timedelta(days=days)
-    date_range = pd.date_range(start_date, end_date, freq='D')
-    
-    
-    data_points = []
-    
-    for device_id, (base_kwh, sigma, name) in DEVICE_PROFILES.items():
-        for date in date_range:
-            # CORREÇÃO AQUI: Passando device_id
-            kwh = generate_daily_kwh(device_id, base_kwh, sigma, date)
-            data_points.append({
-                'device_id': device_id,
-                'kwh': kwh,
-                'timestamp': date
-            })
-
-    print(f"Enviando {len(data_points)} pontos de dados para a API...")
-    for point in tqdm(data_points):
-        ingest_data(point['device_id'], point['kwh'], point['timestamp'])
-        time.sleep(0.001) 
+        self.setup_ui()
         
-    print("--- ✅ BACKFILLING CONCLUÍDO ---")
-
-# --- MODO 2: INTERFACE DE TEMPO REAL (CLI) ---
-
-def run_realtime_cli():
-    """Interface de linha de comando para controlar e ingerir dados em tempo real."""
-    
-    print("\n--- ⚡ INGESTÃO EM TEMPO REAL (CLI) ---")
-    # Imprime o nome do disjuntor em vez do sigma
-    print("Disjuntores:")
-    for id, (_, _, name) in DEVICE_PROFILES.items():
-        print(f"  D{id}: {name}")
+    def setup_ui(self):
+        ttk.Label(self.root, text="🕹️ SIMULADOR", font=('Consolas', 14, 'bold')).pack(pady=15)
         
-    print("\nComandos: [ID do Disjuntor] [Fator de Consumo 0.1-2.0] | 'exit'")
-    print("Ex: 2 1.5 -> Chuveiro consome 50% a mais (1.5x)")
-    
-    while True:
-        try:
-            command = input(">> ").strip()
-            
-            if command.lower() == 'exit':
-                break
-                
-            parts = command.split()
-            if len(parts) != 2:
-                if command:
-                    print("Formato inválido. Use: [ID] [Fator]")
-                continue
-                
-            device_id = int(parts[0])
-            factor = float(parts[1])
-            
-            if device_id not in DEVICE_PROFILES or not (0.1 <= factor <= 2.0):
-                print("ID inválido ou Fator fora do range (0.1 a 2.0).")
-                continue
+        container = ttk.Frame(self.root)
+        container.pack(fill="both", expand=True, padx=20)
 
-            # 1. Simular Consumo Base * Fator de Sobrescrita
-            base_kwh, sigma, _ = DEVICE_PROFILES[device_id]
+        for dev_id, info in DEVICE_PROFILES.items():
+            frame = ttk.LabelFrame(container, text=f" ID: {dev_id} | {info['name']} ", padding=10)
+            frame.pack(fill="x", pady=5)
             
-            # CORREÇÃO AQUI: Passando device_id e datetime.now()
-            kwh_today = generate_daily_kwh(device_id, base_kwh, sigma, datetime.now()) * factor
+            # Switch Ativo
+            self.states[dev_id] = tk.BooleanVar(value=True)
+            ttk.Checkbutton(frame, text="ON", variable=self.states[dev_id]).pack(side="left")
             
-            # 2. Ingerir dado para o dia atual (med_dia)
-            # NOTA: O timestamp é para o dia/hora atual, garantindo que o valor seja atualizado no DB.
-            ingest_data(device_id, kwh_today, datetime.now())
-            
-            # 3. Feedback
-            print(f"-> D{device_id}: Consumo Sobrescrito enviado: {kwh_today:.2f} kWh (Fator: {factor:.1f}x)")
-            
-        except ValueError:
-            print("Entrada inválida. IDs e Fatores devem ser números.")
-        except KeyboardInterrupt:
-            break
+            # Valor Numérico (DoubleVar sincronizado)
+            # Para o PV (ID 6) permitimos range negativo no futuro, mas slider aqui é 0 a 100
+            start_val = info["base"] if info["base"] > 0 else 0
+            self.kwh_values[dev_id] = tk.DoubleVar(value=start_val)
 
-# --- EXECUÇÃO PRINCIPAL ---
+            # Sincronização: Entry -> Slider
+            entry = ttk.Entry(frame, textvariable=self.kwh_values[dev_id], width=8)
+            entry.pack(side="right", padx=5)
+
+            # Sincronização: Slider -> Entry (Limitado a 100)
+            slider = ttk.Scale(frame, from_=0, to=100, variable=self.kwh_values[dev_id], orient="horizontal")
+            slider.pack(side="right", fill="x", expand=True, padx=10)
+
+        # --- CONTROLE DE LOOP ---
+        control_frame = ttk.LabelFrame(self.root, text=" Automação Industrial ", padding=15)
+        control_frame.pack(fill="x", padx=20, pady=20)
+        
+        ttk.Label(control_frame, text="Intervalo (s):").pack(side="left", padx=5)
+        ttk.Entry(control_frame, textvariable=self.interval, width=5).pack(side="left", padx=5)
+
+        self.btn_toggle = ttk.Button(control_frame, text="INICIAR LOOP", command=self.toggle_loop)
+        self.btn_toggle.pack(side="left", padx=20)
+        
+        ttk.Button(control_frame, text="FORÇAR ENVIO AGORA", command=self.manual_send).pack(side="right")
+
+    def toggle_loop(self):
+        if not self.running:
+            self.running = True
+            self.btn_toggle.config(text="PARAR LOOP")
+            threading.Thread(target=self.automation_loop, daemon=True).start()
+        else:
+            self.running = False
+            self.btn_toggle.config(text="INICIAR LOOP")
+
+    def automation_loop(self):
+        while self.running:
+            self.manual_send()
+            time.sleep(self.interval.get())
+
+    def manual_send(self):
+        threading.Thread(target=self.worker_ingest, daemon=True).start()
+
+    def worker_ingest(self):
+        for dev_id in DEVICE_PROFILES.keys():
+            if self.states[dev_id].get():
+                try:
+                    val = self.kwh_values[dev_id].get()
+                    # Inversão para o ID 6 (PV) se necessário, ou enviar conforme GUI
+                    if dev_id == 6 and val > 0: val = -val
+                    
+                    payload = {
+                        "device_id": dev_id,
+                        "kwh": float(val),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    r = requests.post(f"{API_BASE_URL}/data/ingest", json=payload, timeout=2)
+                    if r.status_code == 201:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] D{dev_id} @ {val} kWh")
+                except Exception as e:
+                    print(f"Erro D{dev_id}: {e}")
 
 if __name__ == "__main__":
-    
-    print("\n--- EcoWatt Data Simulator V1.0 ---")
-    
-    # OBSERVAÇÃO: Descomente abaixo para executar o backfilling antes do CLI
-    # run_backfilling(days=730) 
-    
-    run_realtime_cli()
+    root = tk.Tk()
+    app = EcoWattIndustrialGUI(root)
+    root.mainloop()

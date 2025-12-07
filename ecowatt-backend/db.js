@@ -11,6 +11,23 @@ const pool = new pg.Pool({
     password: process.env.DB_PASSWORD,
     port: process.env.DB_PORT,
 });
+
+/**
+ * Busca logs brutos de telemetria para processamento no frontend
+ * @returns {Array} Lista de registros da med_dia
+ */
+const getRawTelemetry = async () => {
+    try {
+        // Retorna device_id (id_disj), kwh (valor) e timestamp ordenados por tempo
+        const query = 'SELECT id_disj as device_id, valor as kwh, timestamp FROM med_dia ORDER BY timestamp ASC';
+        const res = await pool.query(query);
+        return res.rows;
+    } catch (err) {
+        console.error('[DB] Erro ao buscar telemetria bruta:', err.stack);
+        throw new Error('Falha na consulta de telemetria bruta ao banco de dados.');
+    }
+};
+
 // Função para testar a conexão com o banco de dados
 const testConnection = async () => {
     try {
@@ -187,4 +204,4 @@ const getDashboardData = async (userId = 1) => {
 // Teste de Conexão é executado uma vez na inicialização
 testConnection();
 
-export { pool, testConnection, getDashboardData, insertConsumptionData };
+export { pool, testConnection, getDashboardData, insertConsumptionData, getRawTelemetry };
