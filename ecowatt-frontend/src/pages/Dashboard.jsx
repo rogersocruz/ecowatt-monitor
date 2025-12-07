@@ -1,65 +1,93 @@
 // src/pages/Dashboard.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Typography, Grid, Card, CardContent, Divider, CircularProgress, Alert, Container } from '@mui/material';
-import { Bolt as BoltIcon, TrendingUp as TrendIcon, CalendarToday as CalendarIcon, Money as MoneyIcon } from '@mui/icons-material';
+import { Box, Typography, Grid, Card, CardContent, Divider, CircularProgress, Alert, Container, Tooltip } from '@mui/material';
+import { 
+  Bolt as BoltIcon, 
+  TrendingUp as TrendUpIcon, 
+  TrendingDown as TrendDownIcon, // Novo ícone para economia
+  CalendarToday as CalendarIcon, 
+  Money as MoneyIcon, 
+  Speed as SpeedIcon, 
+  Circle as CircleIcon 
+} from '@mui/icons-material';
 
 const TARIFA = 0.85; // R$ 0,85 por kWh
 
-// --- Funções Auxiliares de Data ---
-
-// Calcula o início e fim do ciclo com base na regra do dia 21
+// --- 1. Funções Auxiliares de Data ---
 const getBillingCycle = (now = new Date()) => {
   const currentDay = now.getDate();
   
-  // Data de Início do Ciclo ATUAL
   let cycleStart = new Date(now);
   if (currentDay < 21) {
-    // Se hoje é dia 5, o ciclo começou dia 21 do mês passado
     cycleStart.setMonth(cycleStart.getMonth() - 1);
   }
   cycleStart.setDate(21);
   cycleStart.setHours(0, 0, 0, 0);
 
-  // Data de Término do Ciclo ATUAL (21 do próximo mês)
   let cycleEnd = new Date(cycleStart);
   cycleEnd.setMonth(cycleEnd.getMonth() + 1);
 
-  // Data de Início do Ciclo ANTERIOR (para comparação)
   let prevCycleStart = new Date(cycleStart);
   prevCycleStart.setMonth(prevCycleStart.getMonth() - 1);
 
   return { cycleStart, cycleEnd, prevCycleStart };
 };
 
-// --- Componentes Visuais (Mantidos) ---
+// --- 2. Componentes Visuais ---
 
 const SummaryCard = ({ title, value, color = 'text.primary', bgcolor = '#f0f0f0', icon, secondaryValue }) => (
-  <Card sx={{ height: 160, backgroundColor: bgcolor, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+  <Card sx={{ height: 160, backgroundColor: bgcolor, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: 2 }}>
     <CardContent>
-      <Typography variant="subtitle2" color="text.secondary" gutterBottom>{title}</Typography>
+      <Typography variant="subtitle2" color="text.secondary" gutterBottom fontWeight="bold">{title}</Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 80 }}>
-        {icon && React.cloneElement(icon, { sx: { mr: 1, fontSize: 32, color: color } })}
-        <Typography variant="h3" sx={{ color: color, fontWeight: 'bold' }}>{value}</Typography>
+        {icon && React.cloneElement(icon, { sx: { mr: 1, fontSize: 36, color: color } })}
+        <Typography variant="h4" sx={{ color: color, fontWeight: 'bold' }}>{value}</Typography>
       </Box>
-      {secondaryValue && <Typography variant="caption" align="center" color="text.secondary">{secondaryValue}</Typography>}
+      {secondaryValue && <Typography variant="caption" align="center" color="text.secondary" display="block">{secondaryValue}</Typography>}
     </CardContent>
   </Card>
 );
 
-const DisjuntorCard = ({ name, totalKwh, lastMonthKwh }) => (
-  <Card variant="outlined" sx={{ mb: 2, minHeight: 280, display: 'flex', flexDirection: 'column', textAlign: 'center' }}>
+const DisjuntorCard = ({ name, totalKwh, dailyAvg, lastReading, projectedMonth, isOnline, debugInfo }) => (
+  <Card variant="outlined" sx={{ mb: 2, height: '100%', display: 'flex', flexDirection: 'column', textAlign: 'center', borderColor: isOnline ? '#4caf50' : '#e0e0e0', borderWidth: isOnline ? 2 : 1, boxShadow: 1 }}>
     <CardContent sx={{ flexGrow: 1, p: 2 }}>
-      <Typography variant="h6" color="primary.main" sx={{ fontWeight: 'bold' }}>{name}</Typography>
-      <Divider sx={{ my: 2 }} />
-      <Box sx={{ textAlign: 'center' }}>
-        <Typography variant="caption" color="text.secondary">Este Mês (desde dia 21):</Typography>
-        <Typography variant="h5" sx={{ fontWeight: 'bold' }}>{totalKwh.toFixed(2)} kWh</Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+        <Typography variant="h6" color="primary.main" sx={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{name}</Typography>
         
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>Mês Passado:</Typography>
-        <Typography variant="body2">{lastMonthKwh.toFixed(2)} kWh</Typography>
+        <Tooltip title={isOnline ? "Online" : `Offline: ${debugInfo}`}>
+            <CircleIcon sx={{ fontSize: 16, color: isOnline ? '#4caf50' : '#f44336', cursor: 'help' }} />
+        </Tooltip>
       </Box>
+      
+      <Divider sx={{ my: 1.5 }} />
+      
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="caption" color="text.secondary">Consumo Ciclo Atual</Typography>
+        <Typography variant="h5" sx={{ fontWeight: 'bold' }}>{totalKwh.toFixed(2)} <span style={{fontSize: '0.8rem'}}>kWh</span></Typography>
+      </Box>
+
+      <Grid container spacing={1} sx={{ textAlign: 'left', mt: 1 }}>
+        <Grid item xs={6}>
+          <Typography variant="caption" color="text.secondary" display="block">Última Leitura</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <SpeedIcon sx={{ fontSize: 16, mr: 0.5, color: '#ff9800' }} />
+            <Typography variant="body2" fontWeight="bold">{lastReading.toFixed(2)} kW</Typography>
+          </Box>
+        </Grid>
+        <Grid item xs={6}>
+          <Typography variant="caption" color="text.secondary" display="block">Média Dia</Typography>
+          <Typography variant="body2" fontWeight="bold">{dailyAvg.toFixed(2)} kWh</Typography>
+        </Grid>
+        <Grid item xs={12} sx={{ mt: 1 }}>
+          <Typography variant="caption" color="text.secondary" display="block">Projeção Mês (30d)</Typography>
+          <Typography variant="body2" color="text.primary">{projectedMonth.toFixed(1)} kWh</Typography>
+        </Grid>
+      </Grid>
+
     </CardContent>
-    <Box sx={{ backgroundColor: 'grey.300', p: 1.5, mt: 'auto' }}>
+    
+    <Box sx={{ backgroundColor: '#f5f5f5', p: 1.5, mt: 'auto', borderTop: '1px solid #e0e0e0' }}>
+      <Typography variant="caption" color="text.secondary">Custo Acumulado</Typography>
       <Typography variant="h6" color="error.main" sx={{ fontWeight: 'bold' }}>
         R$ {(totalKwh * TARIFA).toFixed(2)}
       </Typography>
@@ -67,7 +95,7 @@ const DisjuntorCard = ({ name, totalKwh, lastMonthKwh }) => (
   </Card>
 );
 
-// --- Lógica Principal ---
+// --- 3. Lógica Principal ---
 
 const Dashboard = () => {
   const [data, setData] = useState(null);
@@ -75,76 +103,84 @@ const Dashboard = () => {
   const [error, setError] = useState(null);
 
   const processarDados = useCallback((logs) => {
-    // 1. Definir as janelas de tempo
     const { cycleStart, cycleEnd, prevCycleStart } = getBillingCycle();
     
-    // Estruturas de Acumulação
     const devices = {};
     let somaMesAtual = 0;
     let somaMesAnterior = 0;
 
-    // 2. Ordenar cronologicamente para integração correta
     const logsSorted = [...logs].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    // 3. Loop de Integração (Calculus: Power * Delta Time)
+    const globalLatestTime = logsSorted.length > 0 
+        ? new Date(logsSorted[logsSorted.length - 1].timestamp).getTime() 
+        : 0;
+
     logsSorted.forEach((log) => {
       const id = log.device_id;
       const time = new Date(log.timestamp);
       const powerKw = parseFloat(log.kwh);
 
-      // Inicializa estrutura do dispositivo se não existir
       if (!devices[id]) {
         devices[id] = { 
           currentKwh: 0, 
           lastMonthKwh: 0, 
           lastTime: time, 
-          name: `Disjuntor ${id}` 
+          lastReading: 0,
+          name: `Disjuntor ${id}`,
+          isOnline: false 
         };
-        // O primeiro ponto serve apenas de âncora temporal, não gera consumo (Delta T = 0)
         return; 
       }
 
-      // Calcular Delta T em Horas
-      const deltaMs = time - devices[id].lastTime;
-      const deltaHours = deltaMs / (1000 * 60 * 60); // ms -> horas
+      const deltaHours = (time - devices[id].lastTime) / (1000 * 60 * 60);
 
-      // Evitar saltos irreais (ex: sistema desligado por dias não deve gerar consumo linear)
-      // Se delta for > 1 hora, assumimos que o sistema caiu ou parou, ignoramos a integração desse gap
-      if (deltaHours > 1.0) {
-          devices[id].lastTime = time;
-          return; 
+      if (deltaHours <= 1.0) {
+          const energyInc = powerKw * deltaHours;
+
+          // Se estiver no ciclo ATUAL (ex: 21 Nov a 21 Dez)
+          if (time >= cycleStart && time < cycleEnd) {
+            devices[id].currentKwh += energyInc;
+            somaMesAtual += energyInc;
+          } 
+          // Se estiver no ciclo ANTERIOR (ex: 21 Out a 21 Nov)
+          else if (time >= prevCycleStart && time < cycleStart) {
+            devices[id].lastMonthKwh += energyInc;
+            somaMesAnterior += energyInc;
+          }
       }
 
-      // Integração: Energia (kWh) = Potência (kW) * Tempo (h)
-      const energyInc = powerKw * deltaHours;
-
-      // 4. Aplicação da Regra de Negócio (Janelas de Tempo)
-      if (time >= cycleStart && time < cycleEnd) {
-        // PERTENCE AO CICLO ATUAL
-        devices[id].currentKwh += energyInc;
-        somaMesAtual += energyInc;
-      } else if (time >= prevCycleStart && time < cycleStart) {
-        // PERTENCE AO CICLO ANTERIOR
-        devices[id].lastMonthKwh += energyInc;
-        somaMesAnterior += energyInc;
-      }
-
-      // Atualiza o lastTime para o próximo loop
       devices[id].lastTime = time;
+      devices[id].lastReading = powerKw;
     });
 
-    // 5. Cálculos Finais de Interface
+    // --- CÁLCULO DA PORCENTAGEM (COMPARATIVO) ---
+    // Se houve consumo no mês anterior, calcula a diferença. Senão, é 0 (ou 100% se preferir).
     const diffPercent = somaMesAnterior > 0 
       ? ((somaMesAtual - somaMesAnterior) / somaMesAnterior) * 100 
       : 0;
     
-    // Dias restantes no ciclo
-    const daysPassed = Math.floor((new Date() - cycleStart) / (1000 * 60 * 60 * 24));
-    const totalDaysCycle = Math.floor((cycleEnd - cycleStart) / (1000 * 60 * 60 * 24));
-    const daysRemaining = Math.max(0, totalDaysCycle - daysPassed);
+    const timeDiffCycle = new Date() - cycleStart;
+    const daysPassed = Math.max(1, timeDiffCycle / (1000 * 60 * 60 * 24)); 
+    const daysRemaining = Math.max(0, 30 - Math.floor(daysPassed));
 
-    // Identificar vilão
-    const vilao = Object.values(devices).sort((a, b) => b.currentKwh - a.currentKwh)[0];
+    const devicesFormatted = {};
+    
+    Object.keys(devices).forEach(key => {
+        const d = devices[key];
+        const lastTimeMs = d.lastTime.getTime();
+        const diffRelative = globalLatestTime - lastTimeMs;
+        const isSynced = diffRelative <= 10000; 
+        const hasLoad = Math.abs(d.lastReading) > 0.01;
+        const isOnline = isSynced && hasLoad;
+
+        devicesFormatted[key] = {
+            ...d,
+            dailyAvg: d.currentKwh / daysPassed,
+            projectedMonth: (d.currentKwh / daysPassed) * 30,
+            isOnline: isOnline,
+            debugInfo: `${(diffRelative/1000).toFixed(1)}s atrás`
+        };
+    });
 
     return {
       cicloTxt: `${cycleStart.toLocaleDateString('pt-BR')} a ${cycleEnd.toLocaleDateString('pt-BR')}`,
@@ -152,8 +188,7 @@ const Dashboard = () => {
       somaUltimoMes: somaMesAnterior,
       relativo: diffPercent,
       daysRemaining,
-      vilaoName: vilao ? vilao.name : '---',
-      dispositivos: devices
+      dispositivos: devicesFormatted
     };
 
   }, []);
@@ -176,21 +211,35 @@ const Dashboard = () => {
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 5000); // 5s Refresh
+    const interval = setInterval(fetchData, 2000); 
     return () => clearInterval(interval);
   }, [processarDados]);
 
   if (loading && !data) return <Container sx={{mt: 10, textAlign: 'center'}}><CircularProgress /></Container>;
   if (error && !data) return <Container sx={{mt: 5}}><Alert severity="error">{error}</Alert></Container>;
 
-  const relativeColor = data.relativo >= 0 ? 'error.main' : 'success.main';
-  const signal = data.relativo >= 0 ? '+' : '';
+  // --- LÓGICA DE COR E ÍCONE DO COMPARATIVO ---
+  // Se gastou MAIS (relativo > 0): Vermelho (Ruim) e Seta p/ Cima
+  // Se gastou MENOS (relativo < 0): Verde (Bom) e Seta p/ Baixo
+  // Se igual (0): Cinza/Azul e Seta p/ Cima (ou traço)
+  
+  const isSpendingMore = data.relativo > 0;
+  const isSpendingLess = data.relativo < 0;
+
+  let comparisonColor = 'text.secondary'; // Padrão
+  if (isSpendingMore) comparisonColor = 'error.main'; // Vermelho
+  if (isSpendingLess) comparisonColor = 'success.main'; // Verde
+
+  let ComparisonIcon = TrendUpIcon; // Padrão seta pra cima
+  if (isSpendingLess) ComparisonIcon = TrendDownIcon; // Seta pra baixo se economizou
+
+  const signal = data.relativo > 0 ? '+' : '';
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold' }}>🚀 Monitoramento (Ciclo Dia 21)</Typography>
-      <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 3 }}>
-        Vigência: {data.cicloTxt}
+      <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold', mb: 1 }}>🚀 Monitoramento (Ciclo Dia 21)</Typography>
+      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
+        Período de Faturamento: {data.cicloTxt}
       </Typography>
 
       <Grid container spacing={3} sx={{ mb: 4 }}>
@@ -205,13 +254,14 @@ const Dashboard = () => {
         </Grid>
 
         <Grid item xs={12} sm={6} md={3}>
+          {/* Card de Comparativo Atualizado */}
           <SummaryCard 
             title="Comparativo Mês Anterior" 
             value={`${signal}${data.relativo.toFixed(1)}%`} 
-            color={relativeColor}
+            color={comparisonColor}
             secondaryValue={`Mês Passado: ${data.somaUltimoMes.toFixed(2)} kWh`} 
             bgcolor="#fff3e0"
-            icon={<TrendIcon />}
+            icon={<ComparisonIcon />}
           />
         </Grid>
 
@@ -220,7 +270,6 @@ const Dashboard = () => {
             title="Dias Restantes" 
             value={`${data.daysRemaining} dias`} 
             color="warning.main" 
-            secondaryValue={`Vilão: ${data.vilaoName}`}
             bgcolor="#f3e5f5"
             icon={<CalendarIcon />}
           />
@@ -237,14 +286,18 @@ const Dashboard = () => {
         </Grid>
       </Grid>
 
-      <Typography variant="h5" sx={{ mt: 4, mb: 2 }}>Detalhamento por Disjuntor</Typography>
+      <Typography variant="h5" sx={{ mt: 4, mb: 2, fontWeight: 'bold' }}>Detalhamento por Disjuntor</Typography>
       <Grid container spacing={2}>
         {Object.keys(data.dispositivos).map(id => (
-          <Grid item xs={12} sm={6} md={4} key={id}>
+          <Grid item xs={12} sm={6} md={4} lg={3} key={id}>
             <DisjuntorCard 
               name={data.dispositivos[id].name}
               totalKwh={data.dispositivos[id].currentKwh}
-              lastMonthKwh={data.dispositivos[id].lastMonthKwh}
+              lastReading={data.dispositivos[id].lastReading} 
+              dailyAvg={data.dispositivos[id].dailyAvg}       
+              projectedMonth={data.dispositivos[id].projectedMonth}
+              isOnline={data.dispositivos[id].isOnline}
+              debugInfo={data.dispositivos[id].debugInfo}
             />
           </Grid>
         ))}
